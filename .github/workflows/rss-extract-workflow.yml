@@ -1,0 +1,44 @@
+name: Extract RSS Feed Posts
+
+on:
+  schedule:
+    # Runs every 15 days
+    - cron: '0 0 */15 * *'
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  extract-rss:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 python-dateutil
+          
+      - name: Run RSS extractor
+        run: python .github/scripts/extract_rss.py
+        
+      - name: Create output directory if it doesn't exist
+        run: mkdir -p outputs
+      
+      - name: Save results
+        run: |
+          cat rss_extract_results.txt >> outputs/rss_extract_history.txt
+          cp rss_extract_results.txt outputs/latest_extract.txt
+        
+      - name: Commit and push if there are changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add outputs/
+          git commit -m "Update RSS extract results $(date +'%Y-%m-%d')" || echo "No changes to commit"
+          git push
