@@ -3,19 +3,16 @@
 RSS Feed Extractor for BeACleaner Blog
 This script fetches the RSS feed from beacleaner.com, extracts blog post links
 and their published dates, and outputs them in the requested format.
-Only includes posts from the most recent fetch, filtering out older posts.
 """
 
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 import dateutil.parser
 from collections import defaultdict
 import sys
 import traceback
 import time
-import os
-import json
 
 # URL of the RSS feed
 RSS_URL = "https://www.beacleaner.com/rss.xml"
@@ -23,10 +20,6 @@ RSS_URL = "https://www.beacleaner.com/rss.xml"
 MAX_RETRIES = 3
 # Delay between retries (in seconds)
 RETRY_DELAY = 5
-# Track file for keeping previously seen posts
-TRACK_FILE = "outputs/seen_posts.json"
-# How many days of posts to include (0 means only new posts since last run)
-DAYS_TO_INCLUDE = 15
 
 def fetch_rss(url, retries=MAX_RETRIES):
     """
@@ -43,29 +36,6 @@ def fetch_rss(url, retries=MAX_RETRIES):
                 time.sleep(RETRY_DELAY)
             else:
                 raise Exception(f"Failed to fetch RSS feed after {retries} attempts: {e}")
-
-def load_seen_posts():
-    """
-    Load previously seen posts from tracking file
-    """
-    if os.path.exists(TRACK_FILE):
-        try:
-            with open(TRACK_FILE, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load seen posts file: {e}")
-    return {"last_run": None, "posts": []}
-
-def save_seen_posts(seen_data):
-    """
-    Save seen posts to tracking file
-    """
-    os.makedirs(os.path.dirname(TRACK_FILE), exist_ok=True)
-    try:
-        with open(TRACK_FILE, 'w') as f:
-            json.dump(seen_data, f, indent=2)
-    except Exception as e:
-        print(f"Warning: Could not save seen posts file: {e}")
 
 def parse_rss(content):
     """
@@ -86,22 +56,8 @@ def parse_rss(content):
     
     print(f"Successfully found {len(items)} items in the RSS feed using {parser} parser.")
     
-    # Load previously seen posts
-    seen_data = load_seen_posts()
-    seen_urls = set(seen_data["posts"])
-    
-    # Current time for tracking
-    current_time = datetime.now().isoformat()
-    
-    # Calculate the date cutoff if using DAYS_TO_INCLUDE
-    if DAYS_TO_INCLUDE > 0:
-        cutoff_date = datetime.now() - timedelta(days=DAYS_TO_INCLUDE)
-    else:
-        cutoff_date = None
-    
     # Group by published date
     posts_by_date = defaultdict(list)
-    new_seen_urls = set(seen_urls)  # Start with previously seen URLs
     
     for item in items:
         try:
@@ -124,25 +80,11 @@ def parse_rss(content):
             pub_date = dateutil.parser.parse(pub_date_str)
             date_key = pub_date.strftime("%Y-%m-%d")
             
-            # Check if this is a new post or within the date range
-            is_new_post = link not in seen_urls
-            is_within_date_range = cutoff_date is None or pub_date >= cutoff_date
-            
-            # Only include the post if it's new or within the date range
-            if is_new_post or is_within_date_range:
-                posts_by_date[date_key].append(link)
-            
-            # Add to seen URLs for future runs
-            new_seen_urls.add(link)
-            
+            # Store the link under its date
+            posts_by_date[date_key].append(link)
         except Exception as e:
             title = item.find("title").text if item.find("title") else "Unknown"
             print(f"Warning: Error processing item '{title}': {e}")
-    
-    # Update seen posts
-    seen_data["last_run"] = current_time
-    seen_data["posts"] = list(new_seen_urls)
-    save_seen_posts(seen_data)
     
     return posts_by_date
 
@@ -157,7 +99,7 @@ def format_output(posts_by_date):
     output_lines = []
     for date in sorted_dates:
         output_lines.append(f"published date: {date}  ")
-        for link in sorted(posts_by_date[date]):  # Sort links for consistency
+        for link in posts_by_date[date]:
             output_lines.append(f"link: {link}")
         output_lines.append("")  # Add blank line between date groups
     
@@ -165,20 +107,13 @@ def format_output(posts_by_date):
 
 def main():
     try:
-        print(f"Starting RSS feed extraction from {RSS_URL} at {datetime.now().isoformat()}")
+        print(f"Starting RSS feed extraction from {RSS_URL}")
         
         # Fetch the RSS feed
         content = fetch_rss(RSS_URL)
         
-        # Parse the XML and filter for new/recent posts
+        # Parse the XML
         posts_by_date = parse_rss(content)
-        
-        if not posts_by_date:
-            print("No new posts found since last run.")
-            with open("rss_extract_results.txt", "w") as f:
-                f.write("No new posts found since last run.\n")
-                f.write(f"Extraction timestamp: {datetime.now().isoformat()}")
-            return 0
         
         # Format the output
         output_lines = format_output(posts_by_date)
