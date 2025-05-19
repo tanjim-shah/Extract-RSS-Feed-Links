@@ -13,7 +13,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        
+        with:
+          fetch-depth: 0  # Fetch all history for proper tracking
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -24,21 +26,49 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 python-dateutil lxml
           
-      - name: Run RSS extractor
-        run: python .github/scripts/extract_rss.py
-        
       - name: Create output directory if it doesn't exist
         run: mkdir -p outputs
       
+      - name: Run RSS extractor
+        run: python .github/scripts/extract_rss.py
+        
       - name: Save results
         run: |
-          cat rss_extract_results.txt >> outputs/rss_extract_history.txt
-          cp rss_extract_results.txt outputs/latest_extract.txt
+          if [ -f rss_extract_results.txt ]; then
+            # Check if file has content other than error messages
+            if ! grep -q "Error occurred during extraction" rss_extract_results.txt && ! grep -q "No new posts found" rss_extract_results.txt; then
+              echo "Saving extraction results..."
+              # Append latest results to history file
+              cat rss_extract_results.txt >> outputs/rss_extract_history.txt
+              # Save a copy as latest extraction
+              cp rss_extract_results.txt outputs/latest_extract.txt
+              echo "Added $(grep -c "link:" rss_extract_results.txt) links to history"
+              
+              # Run the history pruner
+              python .github/scripts/prune_history.py
+            else
+              echo "No new content to save or error occurred"
+              cat rss_extract_results.txt
+            fi
+          else
+            echo "No results file found"
+          fi
         
-      - name: Commit and push if there are changes
+      - name: Configure Git
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+      
+      - name: Commit and push changes
+        run: |
+          # Add both the extraction results and tracking file
           git add outputs/
-          git commit -m "Update RSS extract results $(date +'%Y-%m-%d')" || echo "No changes to commit"
-          git push
+          git add rss_extract_results.txt
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update RSS extract results $(date +'%Y-%m-%d')"
+            git push
+          fi
