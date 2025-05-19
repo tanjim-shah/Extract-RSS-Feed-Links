@@ -100,7 +100,7 @@ def format_output(posts_by_date):
     for date in sorted_dates:
         output_lines.append(f"published date: {date}  ")
         for link in posts_by_date[date]:
-            output_lines.append(f"link: {link}")
+            output_lines.append(f"{link}")
         output_lines.append("")  # Add blank line between date groups
     
     return output_lines
