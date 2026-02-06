@@ -18,6 +18,7 @@ import {
   ArrowRight,
   FolderTree,
   Link2,
+  Tag,
 } from "lucide-react"
 
 interface SitemapUrl {
@@ -57,6 +58,42 @@ function getPathDepth(url: string): string {
     return new URL(url).pathname
   } catch {
     return url
+  }
+}
+
+const STOP_WORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+  "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+  "be", "have", "has", "had", "do", "does", "did", "will", "would",
+  "could", "should", "may", "might", "can", "this", "that", "these",
+  "those", "it", "its", "not", "no", "nor", "so", "if", "than", "too",
+  "very", "just", "about", "up", "out", "all", "also", "into", "over",
+  "after", "before", "between", "under", "such", "each", "every",
+  "how", "what", "when", "where", "which", "who", "whom", "why",
+  "com", "www", "http", "https", "html", "htm", "php", "asp", "aspx",
+  "jsp", "xml", "json", "page", "index", "default", "new", "amp",
+])
+
+function extractKeywordsFromUrl(url: string): string[] {
+  try {
+    const pathname = new URL(url).pathname
+    const segments = pathname.split("/").filter(Boolean)
+    const words: string[] = []
+    for (const segment of segments) {
+      const parts = segment
+        .replace(/[-_]+/g, " ")
+        .replace(/\.[^.]+$/, "")
+        .split(/\s+/)
+      for (const part of parts) {
+        const clean = part.toLowerCase().replace(/[^a-z0-9]/g, "")
+        if (clean.length > 2 && !STOP_WORDS.has(clean) && !/^\d+$/.test(clean)) {
+          words.push(clean)
+        }
+      }
+    }
+    return words
+  } catch {
+    return []
   }
 }
 
@@ -132,6 +169,22 @@ export function SitemapExtractor() {
     return items
   }, [result, filterText, activeCategory])
 
+  // Keywords extracted from URL slugs
+  const keywordData = useMemo(() => {
+    if (!result) return { keywords: new Map<string, number>(), sorted: [] as [string, number][] }
+    const map = new Map<string, number>()
+    for (const item of result.urls) {
+      const words = extractKeywordsFromUrl(item.loc)
+      for (const word of words) {
+        map.set(word, (map.get(word) || 0) + 1)
+      }
+    }
+    const sorted = Array.from(map.entries()).sort((a, b) => b[1] - a[1])
+    return { keywords: map, sorted }
+  }, [result])
+
+  const [showAllKeywords, setShowAllKeywords] = useState(false)
+
   // Pagination
   const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE)
   const pagedItems = filteredItems.slice(
@@ -198,6 +251,24 @@ export function SitemapExtractor() {
       "",
     ].join("\n")
     triggerDownload(`${header}\n${lines.join("\n")}`, `sitemap-categories-${slugify(url)}.txt`)
+  }
+
+  // Download keywords list
+  const downloadKeywords = () => {
+    if (!keywordData.sorted.length) return
+    const lines = keywordData.sorted.map(
+      ([word, count]) => `${word}  (${count} occurrences)`
+    )
+    const content = [
+      `Keywords Extracted from Sitemap: ${result?.sitemapUrl || url}`,
+      `Extracted on: ${new Date().toLocaleString()}`,
+      `Total Unique Keywords: ${keywordData.sorted.length}`,
+      `Source URLs Analyzed: ${result?.totalUrls || 0}`,
+      "=".repeat(60),
+      "",
+      ...lines,
+    ].join("\n")
+    triggerDownload(content, `sitemap-keywords-${slugify(url)}.txt`)
   }
 
   return (
@@ -291,12 +362,10 @@ export function SitemapExtractor() {
             </div>
             <div className="flex flex-col gap-1 rounded-lg border border-border bg-card p-4">
               <span className="text-xs font-medium text-muted-foreground">
-                Primary Sitemap
+                Keywords
               </span>
-              <span className="truncate text-sm font-semibold text-foreground">
-                {result.sitemapUrl
-                  ? new URL(result.sitemapUrl).pathname
-                  : "N/A"}
+              <span className="text-2xl font-semibold text-foreground">
+                {keywordData.sorted.length.toLocaleString()}
               </span>
             </div>
           </div>
@@ -327,6 +396,14 @@ export function SitemapExtractor() {
             >
               <FolderTree className="h-3.5 w-3.5" />
               Categories (.txt)
+            </button>
+            <button
+              onClick={downloadKeywords}
+              disabled={keywordData.sorted.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              Keywords (.txt)
             </button>
             <div className="h-5 w-px bg-border" />
             <button
@@ -396,6 +473,54 @@ export function SitemapExtractor() {
                     </span>
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Top Keywords */}
+          {keywordData.sorted.length > 0 && (
+            <div className="rounded-lg border border-border bg-card">
+              <div className="flex items-center justify-between border-b border-border px-5 py-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Top Keywords
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {keywordData.sorted.length.toLocaleString()} unique keywords extracted from URL path segments
+                  </p>
+                </div>
+                <button
+                  onClick={downloadKeywords}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download All
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2 p-5">
+                {keywordData.sorted
+                  .slice(0, showAllKeywords ? 100 : 40)
+                  .map(([word, count]) => (
+                    <span
+                      key={word}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 text-xs text-secondary-foreground"
+                    >
+                      {word}
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold leading-none text-muted-foreground">
+                        {count}
+                      </span>
+                    </span>
+                  ))}
+                {keywordData.sorted.length > 40 && (
+                  <button
+                    onClick={() => setShowAllKeywords(!showAllKeywords)}
+                    className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    {showAllKeywords
+                      ? "Show less"
+                      : `+${keywordData.sorted.length - 40} more`}
+                  </button>
+                )}
               </div>
             </div>
           )}
