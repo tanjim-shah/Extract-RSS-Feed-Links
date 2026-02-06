@@ -61,39 +61,76 @@ function getPathDepth(url: string): string {
   }
 }
 
-const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-  "be", "have", "has", "had", "do", "does", "did", "will", "would",
-  "could", "should", "may", "might", "can", "this", "that", "these",
-  "those", "it", "its", "not", "no", "nor", "so", "if", "than", "too",
-  "very", "just", "about", "up", "out", "all", "also", "into", "over",
-  "after", "before", "between", "under", "such", "each", "every",
-  "how", "what", "when", "where", "which", "who", "whom", "why",
-  "com", "www", "http", "https", "html", "htm", "php", "asp", "aspx",
-  "jsp", "xml", "json", "page", "index", "default", "new", "amp",
+// Segments to skip — these are structural, not content keywords
+const SKIP_SEGMENTS = new Set([
+  "page", "index", "default", "category", "categories", "tag", "tags",
+  "archive", "archives", "wp-content", "wp-includes", "wp-admin",
+  "uploads", "feed", "rss", "atom", "sitemap", "search", "login",
+  "register", "author", "admin", "api", "static", "assets", "images",
+  "img", "css", "js", "fonts", "media", "files", "docs", "blog",
+  "post", "posts", "amp", "embed", "attachment",
 ])
 
-function extractKeywordsFromUrl(url: string): string[] {
+/** Small prepositions & articles to keep lowercase in title case */
+const LOWERCASE_WORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+  "of", "with", "by", "from", "as", "is", "nor", "so", "yet", "via",
+])
+
+/**
+ * Converts a URL slug segment into a Title Case phrase.
+ * e.g. "best-in-wall-radiant-heater" -> "Best in-Wall Radiant Heater"
+ */
+function slugToTitle(slug: string): string {
+  const cleaned = slug
+    .replace(/\.[^.]+$/, "") // remove file extension
+    .replace(/[-_]+/g, " ")  // replace hyphens/underscores with spaces
+    .trim()
+
+  if (!cleaned) return ""
+
+  return cleaned
+    .split(/\s+/)
+    .map((word, i) => {
+      const lower = word.toLowerCase()
+      if (i === 0) {
+        // Always capitalize first word
+        return lower.charAt(0).toUpperCase() + lower.slice(1)
+      }
+      if (LOWERCASE_WORDS.has(lower)) {
+        return lower
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    })
+    .join(" ")
+}
+
+/**
+ * Extracts content keyword phrases from a URL.
+ * Returns the last meaningful slug segment as a title-cased phrase,
+ * which represents the page topic / main keyword.
+ */
+function extractKeywordPhrase(url: string): string | null {
   try {
     const pathname = new URL(url).pathname
     const segments = pathname.split("/").filter(Boolean)
-    const words: string[] = []
-    for (const segment of segments) {
-      const parts = segment
-        .replace(/[-_]+/g, " ")
-        .replace(/\.[^.]+$/, "")
-        .split(/\s+/)
-      for (const part of parts) {
-        const clean = part.toLowerCase().replace(/[^a-z0-9]/g, "")
-        if (clean.length > 2 && !STOP_WORDS.has(clean) && !/^\d+$/.test(clean)) {
-          words.push(clean)
-        }
-      }
+
+    // Walk backwards to find the last meaningful (content) segment
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const raw = segments[i].replace(/\.[^.]+$/, "") // strip extension
+      // Skip purely numeric segments (pagination like /page/2)
+      if (/^\d+$/.test(raw)) continue
+      // Skip structural segments
+      if (SKIP_SEGMENTS.has(raw.toLowerCase())) continue
+      // Must have at least 2 words separated by hyphens/underscores to be a keyword phrase
+      const wordCount = raw.split(/[-_]+/).filter((w) => w.length > 0).length
+      if (wordCount < 2) continue
+
+      return slugToTitle(raw)
     }
-    return words
+    return null
   } catch {
-    return []
+    return null
   }
 }
 
@@ -169,18 +206,18 @@ export function SitemapExtractor() {
     return items
   }, [result, filterText, activeCategory])
 
-  // Keywords extracted from URL slugs
+  // Keywords: full title-cased phrases from URL slugs
   const keywordData = useMemo(() => {
-    if (!result) return { keywords: new Map<string, number>(), sorted: [] as [string, number][] }
+    if (!result) return { sorted: [] as [string, number][] }
     const map = new Map<string, number>()
     for (const item of result.urls) {
-      const words = extractKeywordsFromUrl(item.loc)
-      for (const word of words) {
-        map.set(word, (map.get(word) || 0) + 1)
+      const phrase = extractKeywordPhrase(item.loc)
+      if (phrase) {
+        map.set(phrase, (map.get(phrase) || 0) + 1)
       }
     }
     const sorted = Array.from(map.entries()).sort((a, b) => b[1] - a[1])
-    return { keywords: map, sorted }
+    return { sorted }
   }, [result])
 
   const [showAllKeywords, setShowAllKeywords] = useState(false)
@@ -253,22 +290,41 @@ export function SitemapExtractor() {
     triggerDownload(`${header}\n${lines.join("\n")}`, `sitemap-categories-${slugify(url)}.txt`)
   }
 
-  // Download keywords list
+  // Download keywords list (full phrases)
   const downloadKeywords = () => {
     if (!keywordData.sorted.length) return
-    const lines = keywordData.sorted.map(
-      ([word, count]) => `${word}  (${count} occurrences)`
-    )
     const content = [
-      `Keywords Extracted from Sitemap: ${result?.sitemapUrl || url}`,
+      `Website Main Keywords`,
+      `Source: ${result?.sitemapUrl || url}`,
       `Extracted on: ${new Date().toLocaleString()}`,
-      `Total Unique Keywords: ${keywordData.sorted.length}`,
+      `Total Keywords: ${keywordData.sorted.length}`,
       `Source URLs Analyzed: ${result?.totalUrls || 0}`,
       "=".repeat(60),
       "",
-      ...lines,
+      ...keywordData.sorted.map(([phrase]) => phrase),
     ].join("\n")
-    triggerDownload(content, `sitemap-keywords-${slugify(url)}.txt`)
+    triggerDownload(content, `keywords-${slugify(url)}.txt`)
+  }
+
+  // Download keywords with counts
+  const downloadKeywordsDetailed = () => {
+    if (!keywordData.sorted.length) return
+    const maxLen = Math.max(...keywordData.sorted.slice(0, 50).map(([p]) => p.length))
+    const content = [
+      `Website Main Keywords (Detailed)`,
+      `Source: ${result?.sitemapUrl || url}`,
+      `Extracted on: ${new Date().toLocaleString()}`,
+      `Total Keywords: ${keywordData.sorted.length}`,
+      `Source URLs Analyzed: ${result?.totalUrls || 0}`,
+      "=".repeat(60),
+      "",
+      `${"Keyword".padEnd(maxLen + 4)}Count`,
+      `${"-".repeat(maxLen + 4)}-----`,
+      ...keywordData.sorted.map(
+        ([phrase, count]) => `${phrase.padEnd(maxLen + 4)}${count}`
+      ),
+    ].join("\n")
+    triggerDownload(content, `keywords-detailed-${slugify(url)}.txt`)
   }
 
   return (
@@ -405,6 +461,14 @@ export function SitemapExtractor() {
               <Tag className="h-3.5 w-3.5" />
               Keywords (.txt)
             </button>
+            <button
+              onClick={downloadKeywordsDetailed}
+              disabled={keywordData.sorted.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              Keywords + Counts (.txt)
+            </button>
             <div className="h-5 w-px bg-border" />
             <button
               onClick={copyAllLinks}
@@ -477,51 +541,69 @@ export function SitemapExtractor() {
             </div>
           )}
 
-          {/* Top Keywords */}
+          {/* Website Main Keywords */}
           {keywordData.sorted.length > 0 && (
             <div className="rounded-lg border border-border bg-card">
-              <div className="flex items-center justify-between border-b border-border px-5 py-3">
+              <div className="flex flex-col gap-3 border-b border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">
-                    Top Keywords
+                    Website Main Keywords
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    {keywordData.sorted.length.toLocaleString()} unique keywords extracted from URL path segments
+                    {keywordData.sorted.length.toLocaleString()} keyword phrases extracted from URL slugs
                   </p>
                 </div>
-                <button
-                  onClick={downloadKeywords}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download All
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={downloadKeywords}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Keywords Only
+                  </button>
+                  <button
+                    onClick={downloadKeywordsDetailed}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    With Counts
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2 p-5">
+              <div className="flex flex-col">
                 {keywordData.sorted
-                  .slice(0, showAllKeywords ? 100 : 40)
-                  .map(([word, count]) => (
-                    <span
-                      key={word}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 text-xs text-secondary-foreground"
+                  .slice(0, showAllKeywords ? 200 : 30)
+                  .map(([phrase, count], i) => (
+                    <div
+                      key={phrase}
+                      className="flex items-center gap-3 border-b border-border/40 px-5 py-2 last:border-0"
                     >
-                      {word}
-                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold leading-none text-muted-foreground">
-                        {count}
+                      <span className="w-8 shrink-0 text-right font-mono text-xs text-muted-foreground">
+                        {i + 1}
                       </span>
-                    </span>
+                      <span className="flex-1 text-sm text-foreground">
+                        {phrase}
+                      </span>
+                      {count > 1 && (
+                        <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                          {count}x
+                        </span>
+                      )}
+                    </div>
                   ))}
-                {keywordData.sorted.length > 40 && (
+              </div>
+              {keywordData.sorted.length > 30 && (
+                <div className="border-t border-border px-5 py-3">
                   <button
                     onClick={() => setShowAllKeywords(!showAllKeywords)}
-                    className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    className="text-xs font-medium text-primary transition-colors hover:text-primary/80"
                   >
                     {showAllKeywords
                       ? "Show less"
-                      : `+${keywordData.sorted.length - 40} more`}
+                      : `Show all ${keywordData.sorted.length.toLocaleString()} keywords`}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
 
