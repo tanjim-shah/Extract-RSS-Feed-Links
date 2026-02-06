@@ -5,15 +5,32 @@ import useSWR from "swr"
 import { StatsCards } from "./stats-cards"
 import { LinkTable } from "./link-table"
 import { UrlExtractor } from "./url-extractor"
-import { Rss } from "lucide-react"
+import { SitemapExtractor } from "./sitemap-extractor"
+import { Rss, MapPin } from "lucide-react"
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
-type View = "extract" | "history"
+type View = "extract" | "sitemap" | "history"
 
 export function Dashboard() {
   const [view, setView] = useState<View>("extract")
-  const { data, error, isLoading } = useSWR("/api/feeds", fetcher)
+  const { data, error, isLoading } = useSWR(
+    view === "history" ? "/api/feeds" : null,
+    fetcher
+  )
+
+  const navItems: { key: View; label: string; icon: React.ReactNode }[] = [
+    {
+      key: "extract",
+      label: "RSS Extract",
+      icon: <Rss className="h-3.5 w-3.5" />,
+    },
+    {
+      key: "sitemap",
+      label: "Sitemap",
+      icon: <MapPin className="h-3.5 w-3.5" />,
+    },
+  ]
 
   return (
     <div className="min-h-screen">
@@ -28,22 +45,26 @@ export function Dashboard() {
                 RSS Feed Extractor
               </h1>
               <p className="text-xs text-muted-foreground">
-                Extract RSS feed links from any URL
+                Extract RSS feeds and XML sitemaps from any URL
               </p>
             </div>
           </div>
 
           <nav className="flex gap-1 rounded-lg border border-border bg-muted p-1">
-            <button
-              onClick={() => setView("extract")}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                view === "extract"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Extract
-            </button>
+            {navItems.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setView(item.key)}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  view === item.key
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
             <button
               onClick={() => setView("history")}
               className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -60,6 +81,8 @@ export function Dashboard() {
 
       <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8">
         {view === "extract" && <UrlExtractor />}
+
+        {view === "sitemap" && <SitemapExtractor />}
 
         {view === "history" && (
           <>
