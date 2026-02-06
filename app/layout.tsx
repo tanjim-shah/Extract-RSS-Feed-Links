@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "RSS Feed Link Extractor",
-  description: "View and search extracted RSS feed links from beacleaner.com",
+  description: "Extract RSS feed links from any URL. Discover feeds, parse items, and export links.",
 }
 
 export const viewport: Viewport = {
